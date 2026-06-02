@@ -3,8 +3,11 @@ const SERVER = "wss://watchparty-relay.khalilbenaz.workers.dev";
 let tab;
 
 function randomRoom() {
-  const w = ["cine", "popcorn", "movie", "binge", "salon", "duo", "team"];
-  return w[Math.floor(Math.random() * w.length)] + Math.floor(100 + Math.random() * 900);
+  // id de salle = secret de ~100 bits → indevinable (impossible d'énumérer les salles)
+  const chars = "abcdefghijkmnpqrstuvwxyz23456789"; // sans caractères ambigus
+  const a = new Uint8Array(20);
+  crypto.getRandomValues(a);
+  return Array.from(a, b => chars[b % chars.length]).join("");
 }
 
 async function init() {
@@ -81,16 +84,31 @@ async function launch(room) {
 
 function showLink(room) {
   // lien qui pointe DIRECTEMENT vers la vidéo courante + rejoint la salle.
-  // Ne contient que le code de salle — l'URL du serveur reste interne à l'extension.
+  // Ne contient que l'id de salle — l'URL du serveur reste interne à l'extension.
   const link = tab.url.split("#")[0] + "#wp=" + encodeURIComponent(room);
-  $("out").innerHTML = `
-    <div class="ok" style="margin-top:10px">✓ Vidéo synchronisée — salle <b>#${room}</b></div>
-    <button class="primary" id="copy" style="width:100%;margin-top:8px">📋 Copier le lien à partager</button>
-    <div class="hint" style="margin-top:6px">${link}</div>`;
-  $("copy").addEventListener("click", () => {
+
+  // Construction DOM (pas d'innerHTML interpolé) → aucune injection possible
+  // depuis l'URL de la page ou un code de salle piégé.
+  const out = $("out");
+  out.textContent = "";
+
+  const ok = document.createElement("div");
+  ok.className = "ok"; ok.style.marginTop = "10px";
+  ok.textContent = "✓ Vidéo synchronisée";
+
+  const btn = document.createElement("button");
+  btn.className = "primary"; btn.style.cssText = "width:100%;margin-top:8px";
+  btn.textContent = "📋 Copier le lien à partager";
+
+  const lk = document.createElement("div");
+  lk.className = "hint"; lk.style.marginTop = "6px";
+  lk.textContent = link;
+
+  out.append(ok, btn, lk);
+  btn.addEventListener("click", () => {
     navigator.clipboard.writeText(link)
-      .then(() => { $("copy").textContent = "✓ Lien copié — envoie-le à tes amis !"; })
-      .catch(() => { $("copy").textContent = "Copie manuelle ci-dessous ⬇"; });
+      .then(() => { btn.textContent = "✓ Lien copié — envoie-le à tes amis !"; })
+      .catch(() => { btn.textContent = "Copie manuelle ci-dessous ⬇"; });
   });
 }
 

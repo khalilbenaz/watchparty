@@ -122,6 +122,19 @@ Le point 🟢 dans la barre = connecté. Un message « … a rejoint » confirme
 
 ---
 
+## 🔒 Sécurité
+
+Le relais est public ; le modèle de sécurité repose sur des mesures défensives :
+
+- **Salles privées par secret.** L'id de salle est un aléa de ~100 bits généré via `crypto.getRandomValues` — indevinable et non énumérable. Le connaître (via le lien) = y accéder. Ne partage le lien qu'aux personnes voulues.
+- **Relais réservé aux extensions.** Le Worker refuse (`403`) toute connexion dont l'`Origin` est `http(s)://` → aucun site web ne peut abuser du relais (vérifié en test).
+- **Plafonds anti-abus.** Max 8 participants/salle, messages ≤ 64 Ko, pseudo ≤ 32 caractères.
+- **Pas d'injection.** Le popup construit son DOM via `textContent` (jamais d'`innerHTML` interpolé avec l'URL de la page ou un code saisi). Le chat affiche les messages en `textContent`.
+- **URL du serveur masquée** dans l'UI et les liens (constante interne).
+- **Pilotage Netflix isolé** : `postMessage` ciblé sur l'origine exacte + nonce partagé.
+
+⚠️ Limites assumées : le relais reste ouvert à toute extension (pas d'authentification de compte) ; la confidentialité d'une salle dépend de la confidentialité de son lien. La webcam transite en P2P (WebRTC) et expose ton IP aux participants de la salle — n'invite que des personnes de confiance.
+
 ## 📄 Licence
 
 MIT — voir [LICENSE](LICENSE).

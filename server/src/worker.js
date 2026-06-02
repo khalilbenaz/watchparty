@@ -2,6 +2,9 @@
 // Une instance de Durable Object par salle. Fan-out des messages entre les
 // participants via l'API WebSocket Hibernation (gratuit, sans coût quand idle).
 
+const MAX_PEERS = 8;             // participants max par salle
+const MAX_MSG = 64 * 1024;       // 64 Ko : large pour les SDP/ICE, bloque le flood
+
 export class Room {
   constructor(state) {
     this.state = state;
@@ -9,10 +12,15 @@ export class Room {
 
   async fetch(request) {
     const url = new URL(request.url);
-    const name = url.searchParams.get("name") || "Anon";
+    const name = (url.searchParams.get("name") || "Anon").slice(0, 32);
 
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
+    }
+
+    // plafond de participants (anti-abus + protège le coût)
+    if (this.state.getWebSockets().length >= MAX_PEERS) {
+      return new Response("room full", { status: 403 });
     }
 
     const pair = new WebSocketPair();
@@ -30,6 +38,8 @@ export class Room {
 
   // relais : on renvoie le message brut à tous les autres sockets de la salle
   webSocketMessage(ws, message) {
+    const size = typeof message === "string" ? message.length : (message.byteLength || 0);
+    if (size > MAX_MSG) { try { ws.close(1009, "message too big"); } catch (_) {} return; }
     this.broadcast(ws, message);
   }
 
@@ -60,6 +70,13 @@ export default {
       return new Response("WatchParty relay ✓ — connecte-toi en WebSocket avec ?room=CODE", {
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
+    }
+
+    // Seules les connexions venant d'une extension sont acceptées : une page web
+    // a une Origin http(s) → on la refuse. Empêche tout site d'abuser du relais.
+    const origin = request.headers.get("Origin") || "";
+    if (/^https?:\/\//i.test(origin)) {
+      return new Response("forbidden", { status: 403 });
     }
 
     const room = url.searchParams.get("room") || "lobby";

@@ -14,7 +14,10 @@
   }
 
   window.addEventListener("message", e => {
-    if (e.source !== window || !e.data || e.data.__wp !== "cmd") return;
+    if (e.source !== window || e.origin !== location.origin) return;
+    if (!e.data || e.data.__wp !== "cmd") return;
+    // le nonce doit correspondre à celui posé par notre content script
+    if (e.data.n !== document.documentElement.dataset.wpn) return;
     const p = player();
     if (!p) return;
     try {

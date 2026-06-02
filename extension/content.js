@@ -85,7 +85,11 @@
   }
 
   // Pilotage : sur Netflix via l'API interne (anti-M7375), ailleurs via l'élément.
-  function nfx(action, timeMs) { window.postMessage({ __wp: "cmd", action, timeMs }, "*"); }
+  // nonce partagé avec le script MAIN via un data-attribut + postMessage ciblé sur
+  // l'origine exacte → rejette les messages forgés depuis une autre frame/origine.
+  const WP_NONCE = Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
+  if (isNetflix) { try { document.documentElement.dataset.wpn = WP_NONCE; } catch (_) {} }
+  function nfx(action, timeMs) { window.postMessage({ __wp: "cmd", n: WP_NONCE, action, timeMs }, location.origin); }
   function ctrlPlay()  { if (isNetflix) nfx("play");  else if (video) video.play().catch(() => {}); }
   function ctrlPause() { if (isNetflix) nfx("pause"); else if (video) video.pause(); }
   function ctrlSeek(t) {
@@ -135,7 +139,7 @@
     cfg = { ...cfg, ...config };
     if (!ui) buildUI();
     ui.style.display = "flex";
-    ui.querySelector("#wp-room").textContent = `#${cfg.room}`;
+    ui.querySelector("#wp-room").textContent = "salle " + cfg.room.slice(0, 6) + "…";
     connect();
     watchForVideo();
   }
@@ -160,7 +164,7 @@
         <button type="submit">↑</button>
       </form>`;
     document.body.appendChild(ui);
-    ui.querySelector("#wp-room").textContent = `#${cfg.room}`;
+    ui.querySelector("#wp-room").textContent = "salle " + cfg.room.slice(0, 6) + "…";
     ui.querySelector("#wp-form").addEventListener("submit", e => {
       e.preventDefault();
       const inp = ui.querySelector("#wp-input");
