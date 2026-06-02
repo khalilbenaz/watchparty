@@ -1,0 +1,46 @@
+#wp-root {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: 320px;
+  height: 100vh;
+  z-index: 2147483647;
+  display: none;
+  flex-direction: column;
+  background: #14161c;
+  color: #e8eaf0;
+  font: 14px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+  box-shadow: -4px 0 24px rgba(0,0,0,.45);
+  border-left: 1px solid #2a2e3a;
+}
+#wp-root.wp-collapsed { height: 44px; overflow: hidden; }
+
+#wp-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 0 12px; height: 44px;
+  background: linear-gradient(90deg,#6d28d9,#9333ea);
+  font-weight: 600; flex: 0 0 auto;
+}
+#wp-dot { width: 9px; height: 9px; border-radius: 50%; background: #f87171; }
+#wp-dot.wp-on { background: #34d399; }
+#wp-dot.wp-off { background: #f87171; }
+#wp-room { margin-left: auto; opacity: .85; font-weight: 500; font-size: 12px; }
+#wp-share, #wp-cam, #wp-min { background: rgba(255,255,255,.15); border: 0; color: #fff; width: 26px; height: 26px;
+  border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1; }
+#wp-cam.wp-active { background: #34d399; }
+
+#wp-cams { flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 6px; background: #0e1014; max-height: 40vh; overflow-y: auto; }
+#wp-cams.wp-empty { display: none; }
+#wp-cams video { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 8px; background: #000; }
+
+#wp-messages { flex: 1 1 auto; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.wp-msg { max-width: 90%; padding: 6px 10px; border-radius: 10px; background: #232734; align-self: flex-start; word-wrap: break-word; }
+.wp-msg.wp-mine { align-self: flex-end; background: #4c1d95; }
+.wp-msg b { display: block; font-size: 11px; opacity: .7; margin-bottom: 2px; }
+.wp-sys { align-self: center; font-size: 11px; opacity: .55; font-style: italic; }
+
+#wp-form { display: flex; gap: 6px; padding: 10px; border-top: 1px solid #2a2e3a; flex: 0 0 auto; }
+#wp-input { flex: 1; background: #0e1014; border: 1px solid #2a2e3a; color: #e8eaf0;
+  border-radius: 8px; padding: 8px 10px; outline: none; }
+#wp-input:focus { border-color: #9333ea; }
+#wp-form button { background: #9333ea; border: 0; color: #fff; width: 38px; border-radius: 8px; cursor: pointer; font-size: 16px; }

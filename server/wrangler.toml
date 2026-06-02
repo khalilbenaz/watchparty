@@ -1,0 +1,13 @@
+name = "watchparty-relay"
+main = "src/worker.js"
+compatibility_date = "2025-06-01"
+
+# Une salle = une instance de Durable Object
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "Room"
+
+# Classe DO en SQLite → éligible au plan gratuit Workers
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
