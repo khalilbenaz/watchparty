@@ -14,9 +14,9 @@ function closeConn(tabId) {
   if (c) { try { c.ws.close(); } catch (_) {} delete conns[tabId]; }
 }
 
-function connect(tabId, { server, room, name }) {
+function connect(tabId, { server, room, token, name }) {
   closeConn(tabId);
-  const url = `${server}?room=${encodeURIComponent(room)}&name=${encodeURIComponent(name)}`;
+  const url = `${server}?room=${encodeURIComponent(room)}&token=${encodeURIComponent(token || "")}&name=${encodeURIComponent(name)}`;
   let ws;
   try { ws = new WebSocket(url); }
   catch (_) { notify(tabId, { cmd: "wsstatus", open: false, error: "url" }); return; }

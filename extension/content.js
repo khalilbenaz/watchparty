@@ -11,7 +11,7 @@
   let connected = false;
   let video = null;
   let suppress = false;       // ignore les events vidéo qu'on déclenche nous-mêmes
-  let cfg = { server: SERVER, room: "", name: "Anon" };
+  let cfg = { server: SERVER, room: "", token: "", name: "Anon" };
   let ui = null;
   let watching = false;       // watchForVideo déjà lancé ?
 
@@ -132,7 +132,7 @@
 
   function connect() {
     sys(`Connexion à la salle « ${cfg.room} »…`);
-    rt({ cmd: "connect", server: cfg.server || SERVER, room: cfg.room, name: cfg.name });
+    rt({ cmd: "connect", server: cfg.server || SERVER, room: cfg.room, token: cfg.token, name: cfg.name });
   }
 
   function start(config) {
@@ -330,17 +330,17 @@
   (function tryAutoJoin() {
     const m = location.hash.match(/[#&]wp=([^&]+)/);
     if (!m) return;
-    let room = "";
-    try { room = decodeURIComponent(m[1]); } catch (_) { room = m[1]; }
-    // rétro-compat : ancien format base64 {server,room}
-    try { const old = JSON.parse(atob(room)); if (old && old.room) room = old.room; } catch (_) {}
-    if (!room) return;
-    if (!alive()) return;
+    let v = m[1];
+    try { v = decodeURIComponent(v); } catch (_) {}
+    const i = v.indexOf(".");
+    if (i < 0) return;                       // format attendu : room.token
+    const room = v.slice(0, i), token = v.slice(i + 1);
+    if (!room || !token || !alive()) return;
     try {
-      chrome.storage.local.get(["name"], v => {
+      chrome.storage.local.get(["name"], info => {
         if (chrome.runtime.lastError) return;
-        const name = (v && v.name) || "Invité" + Math.floor(Math.random() * 100);
-        start({ server: SERVER, room, name });
+        const name = (info && info.name) || "Invité" + Math.floor(Math.random() * 100);
+        start({ server: SERVER, room, token, name });
       });
     } catch (_) {}
   })();

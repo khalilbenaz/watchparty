@@ -65,7 +65,8 @@ watchparty-extension.zip  Build prêt à partager
 ```bash
 cd server
 npm install
-npx wrangler login        # connecte ton compte Cloudflare
+npx wrangler login                                   # connecte ton compte Cloudflare
+openssl rand -base64 32 | npx wrangler secret put ROOM_SECRET   # secret HMAC (hors dépôt)
 npx wrangler deploy
 ```
 
@@ -126,7 +127,7 @@ Le point 🟢 dans la barre = connecté. Un message « … a rejoint » confirme
 
 Le relais est public ; le modèle de sécurité repose sur des mesures défensives :
 
-- **Salles privées par secret.** L'id de salle est un aléa de ~100 bits généré via `crypto.getRandomValues` — indevinable et non énumérable. Le connaître (via le lien) = y accéder. Ne partage le lien qu'aux personnes voulues.
+- **Salles authentifiées par token HMAC.** Le Worker détient un secret (`ROOM_SECRET`, **hors dépôt**, posé via `wrangler secret put`). Il *mint* chaque salle (`GET /new`) avec un id aléatoire 128 bits **et** un token signé HMAC-SHA256. Toute connexion WebSocket est refusée (`403`) si le token ne correspond pas — **infalsifiable même en lisant ce code** (vérifié en test). Le lien d'invitation porte `room.token`.
 - **Relais réservé aux extensions.** Le Worker refuse (`403`) toute connexion dont l'`Origin` est `http(s)://` → aucun site web ne peut abuser du relais (vérifié en test).
 - **Plafonds anti-abus.** Max 8 participants/salle, messages ≤ 64 Ko, pseudo ≤ 32 caractères.
 - **Pas d'injection.** Le popup construit son DOM via `textContent` (jamais d'`innerHTML` interpolé avec l'URL de la page ou un code saisi). Le chat affiche les messages en `textContent`.

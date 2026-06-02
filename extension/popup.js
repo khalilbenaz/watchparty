@@ -1,13 +1,23 @@
 const $ = id => document.getElementById(id);
 const SERVER = "wss://watchparty-relay.khalilbenaz.workers.dev";
+const HTTP = SERVER.replace(/^ws/, "http"); // wss→https
 let tab;
 
-function randomRoom() {
-  // id de salle = secret de ~100 bits → indevinable (impossible d'énumérer les salles)
-  const chars = "abcdefghijkmnpqrstuvwxyz23456789"; // sans caractères ambigus
-  const a = new Uint8Array(20);
-  crypto.getRandomValues(a);
-  return Array.from(a, b => chars[b % chars.length]).join("");
+// crée une salle signée côté serveur (token HMAC)
+async function mintRoom() {
+  const r = await fetch(HTTP + "/new");
+  if (!r.ok) throw new Error("mint " + r.status);
+  return r.json(); // { room, token }
+}
+
+// accepte un lien complet (…#wp=room.token) ou directement "room.token"
+function parseInvite(s) {
+  const m = s.match(/#wp=([^&]+)/);
+  let v = m ? m[1] : s;
+  try { v = decodeURIComponent(v); } catch (_) {}
+  const i = v.indexOf(".");
+  if (i < 0) return null;
+  return { room: v.slice(0, i), token: v.slice(i + 1) };
 }
 
 async function init() {
@@ -31,18 +41,28 @@ function renderStart() {
     <button class="primary big" id="go">🎉 Démarrer la WatchParty</button>
     <div class="sep">— ou rejoindre —</div>
     <div class="row">
-      <input id="code" placeholder="code d'un ami" />
+      <input id="code" placeholder="lien reçu d'un ami" />
       <button class="ghost" id="join">Rejoindre</button>
     </div>
     <div id="out"></div>`;
-  $("go").addEventListener("click", () => launch(randomRoom()));
+  $("go").addEventListener("click", createParty);
   $("join").addEventListener("click", () => {
-    const c = $("code").value.trim();
-    if (c) launch(c);
+    const inv = parseInvite($("code").value.trim());
+    if (inv) launch(inv.room, inv.token);
+    else { $("out").textContent = "Lien invalide."; $("out").className = "hint"; }
   });
 }
 
+async function createParty() {
+  $("out").textContent = "⏳ Création de la salle…"; $("out").className = "hint";
+  let info;
+  try { info = await mintRoom(); }
+  catch (_) { $("out").textContent = "❌ Serveur injoignable."; return; }
+  launch(info.room, info.token);
+}
+
 function sendStart(m) {
+  // m = { server, room, token, name }
   chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m }, () => {
     if (chrome.runtime.lastError) {
       chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }, () => {
@@ -60,21 +80,20 @@ function getStatus() {
   });
 }
 
-async function launch(room) {
+async function launch(room, token) {
   const name = $("name").value.trim() || "Anon";
-  await chrome.storage.local.set({ name, room, server: SERVER });
+  await chrome.storage.local.set({ name });
 
-  sendStart({ server: SERVER, room, name });
+  sendStart({ server: SERVER, room, token, name });
 
   // On ne génère le lien QUE si une vidéo est détectée/synchronisée sur la page.
-  $("out").innerHTML = `<div class="hint" style="margin-top:10px">⏳ Détection de la vidéo en cours…</div>`;
+  $("out").textContent = "⏳ Détection de la vidéo en cours…"; $("out").className = "hint";
   let tries = 0;
   const poll = async () => {
     const s = await getStatus();
-    if (s && s.hasVideo) { showLink(room); return; }
+    if (s && s.hasVideo) { showLink(room, token); return; }
     if (++tries > 14) {
-      $("out").innerHTML =
-        `<div class="hint" style="margin-top:10px">⚠️ Aucune vidéo détectée sur cette page.<br>Lance la lecture d'une vidéo, puis re-clique « Démarrer ».</div>`;
+      $("out").textContent = "⚠️ Aucune vidéo détectée. Lance la lecture d'une vidéo, puis re-clique « Démarrer ».";
       return;
     }
     setTimeout(poll, 500);
@@ -82,10 +101,11 @@ async function launch(room) {
   poll();
 }
 
-function showLink(room) {
+function showLink(room, token) {
+  $("out").className = "";
   // lien qui pointe DIRECTEMENT vers la vidéo courante + rejoint la salle.
-  // Ne contient que l'id de salle — l'URL du serveur reste interne à l'extension.
-  const link = tab.url.split("#")[0] + "#wp=" + encodeURIComponent(room);
+  // Contient l'id + token signé — l'URL du serveur reste interne à l'extension.
+  const link = tab.url.split("#")[0] + "#wp=" + encodeURIComponent(room + "." + token);
 
   // Construction DOM (pas d'innerHTML interpolé) → aucune injection possible
   // depuis l'URL de la page ou un code de salle piégé.
