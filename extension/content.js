@@ -357,21 +357,51 @@
   });
 
   // ---------- AUTO-JOIN via lien d'invitation (#wp=...) ----------
-  (function tryAutoJoin() {
-    const m = location.hash.match(/[#&]wp=([^&]+)/);
-    if (!m) return;
-    let v = m[1];
-    try { v = decodeURIComponent(v); } catch (_) {}
-    const i = v.indexOf(".");
-    if (i < 0) return;                       // format attendu : room.token
-    const room = v.slice(0, i), token = v.slice(i + 1);
-    if (!room || !token || !alive()) return;
+  // Un lien piégé ouvert sur n'importe quel site ne doit PAS donner le contrôle de la
+  // lecture : on demande d'abord une confirmation. L'invite est dans un Shadow DOM
+  // fermé (le JS de la page ne peut pas la cliquer) et le clic doit être « de confiance »
+  // (isTrusted), donc un `click()` scripté par la page est ignoré.
+  function askJoin(onYes) {
+    const host = document.createElement("div");
+    host.style.cssText = "all:initial;position:fixed;top:16px;right:16px;z-index:2147483647";
+    const root = host.attachShadow({ mode: "closed" });
+    root.innerHTML = `
+      <style>
+        .box{font:14px -apple-system,"Segoe UI",Roboto,sans-serif;background:#14161c;color:#e8eaf0;border:1px solid #9333ea;
+             border-radius:12px;padding:14px 16px;width:300px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+        p{margin:0 0 12px;line-height:1.4} .warn{font-size:12px;opacity:.75}
+        button{border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;color:#fff;margin-right:8px}
+        .y{background:#9333ea}.n{background:#232734}
+      </style>
+      <div class="box" role="dialog" aria-label="Invitation WatchParty">
+        <p><b>Rejoindre une WatchParty ?</b></p>
+        <p class="warn" id="msg"></p>
+        <button class="y" id="y">Rejoindre</button><button class="n" id="n">Ignorer</button>
+      </div>`;
+    root.querySelector("#msg").textContent =
+      `Un lien t'invite à rejoindre une salle depuis ${location.hostname}. Les participants pourront mettre en pause et déplacer la lecture de cette page. Ne rejoins que des personnes de confiance.`;
+    root.querySelector("#y").addEventListener("click", e => { if (!e.isTrusted) return; host.remove(); onYes(); });
+    root.querySelector("#n").addEventListener("click", e => { if (!e.isTrusted) return; host.remove(); });
+    document.documentElement.appendChild(host);
+  }
+
+  function tryAutoJoin() {
+    const inv = WPCore.parseInvite(location.hash);
+    if (!inv || !alive()) return;
     try {
       chrome.storage.local.get(["name"], info => {
         if (chrome.runtime.lastError) return;
-        const name = (info && info.name) || "Invité" + Math.floor(Math.random() * 100);
-        start({ room, token, name });
+        const name = WPCore.sanitizeName((info && info.name) || "Invité" + Math.floor(Math.random() * 100));
+        askJoin(() => start({ room: inv.room, token: inv.token, name }));
       });
     } catch (_) {}
-  })();
+  }
+
+  // Page rechargée dans un onglet qui avait déjà une salle (état gardé par le service
+  // worker) : on reprend sans redemander. Sinon, invitation éventuelle dans l'URL.
+  rt({ cmd: "resume" }, r => {
+    void chrome.runtime.lastError;
+    if (r && r.active) start(r);
+    else tryAutoJoin();
+  });
 })();
