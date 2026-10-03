@@ -11,3 +11,19 @@ class_name = "Room"
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]
+
+# Limiteur de débit par IP (/new et connexions WebSocket) : un DO par clé
+[[durable_objects.bindings]]
+name = "LIMITER"
+class_name = "Limiter"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Limiter"]
+
+# Origin(s) autorisée(s) : l'ID de TON extension (chrome://extensions, mode développeur).
+# Plusieurs ID : séparés par des virgules. Vide → le relais répond 503 (échec fermé).
+# Exemple : "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+# Rappel : Origin est falsifiable hors navigateur (curl) ; ce n'est pas une authentification.
+[vars]
+ALLOWED_ORIGINS = ""
