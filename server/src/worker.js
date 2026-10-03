@@ -7,6 +7,7 @@
 
 const MAX_PEERS = 8;             // participants max par salle
 const MAX_MSG = 64 * 1024;       // 64 Ko : large pour les SDP/ICE, bloque le flood
+const MIN_SECRET_LEN = 16;       // longueur minimale de ROOM_SECRET
 const enc = new TextEncoder();
 
 function b64url(buf) {
@@ -89,7 +90,12 @@ export default {
     const url = new URL(request.url);
     const origin = request.headers.get("Origin") || "";
     const webOrigin = /^https?:\/\//i.test(origin);     // une page web → refusée
-    const secret = env.ROOM_SECRET || "dev-insecure-secret";
+    // Pas de secret → on ne sert RIEN (jamais de repli : un secret connu rendrait
+    // tous les jetons forgeables par quiconque lit le dépôt).
+    const secret = typeof env.ROOM_SECRET === "string" ? env.ROOM_SECRET.trim() : "";
+    if (secret.length < MIN_SECRET_LEN) {
+      return new Response("relais mal configuré : ROOM_SECRET manquant ou trop court", { status: 503 });
+    }
 
     // Mint d'une salle : renvoie {room, token signé}. Réservé aux extensions.
     if (url.pathname === "/new") {
