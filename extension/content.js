@@ -9,7 +9,9 @@
   const isNetflix = /(^|\.)netflix\.com$/.test(location.hostname);
   let connected = false;
   let video = null;
-  let suppress = false;       // ignore les events vidéo qu'on déclenche nous-mêmes
+  let pending = null;          // état initial reçu avant qu'une vidéo soit détectée
+  const sync = WPCore.createSync();   // logique de synchro pure (testée dans tests/core.test.js)
+  let clock = null;            // meilleur échantillon de décalage d'horloge client/serveur
   let cfg = { room: "", token: "", name: "Anon" };
   let ui = null;
   let watching = false;       // watchForVideo déjà lancé ?
@@ -23,7 +25,8 @@
     { urls: "turn:openrelay.metered.ca:443", username: "openrelayproject", credential: "openrelayproject" },
     { urls: "turn:openrelay.metered.ca:443?transport=tcp", username: "openrelayproject", credential: "openrelayproject" },
   ] };
-  const myId = Math.random().toString(36).slice(2, 10);
+  const LOCAL = "self";        // clé de la vignette de ma propre caméra
+  let myId = null;            // attribué par le serveur (message `welcome`)
   const peers = {};          // remoteId -> { pc, polite, makingOffer }
   let localStream = null;
   let dead = false;          // contexte d'extension invalidé (après reload) ?
@@ -39,7 +42,7 @@
   function teardown() {
     if (dead) return;
     dead = true; connected = false;
-    try { if (video) ["play", "pause", "seeked"].forEach(ev => video.removeEventListener(ev, onLocalEvent)); } catch (_) {}
+    unbindVideo();
     intervals.forEach(id => { try { clearInterval(id); } catch (_) {} });
     try { if (ui) ui.remove(); } catch (_) {}
   }
@@ -55,13 +58,25 @@
     rt({ cmd: "send", payload: obj });
   }
 
+  // Le serveur est la seule source d'identité : `from`, `name`, `v`, `ts` viennent de lui.
   function handleData(raw) {
     let m; try { m = JSON.parse(raw); } catch (_) { return; }
-    if (m.t === "ping") return;
-    if (m.t === "sync") applyRemote(m);
-    else if (m.t === "chat") addChat(m.name, m.text, false);
-    else if (m.t === "system") sys(m.text);
-    else if (m.t === "rtc") onRtc(m);
+    if (!m || typeof m !== "object") return;
+    if (m.t === "pong") {
+      if (typeof m.c === "number" && typeof m.s === "number") {
+        clock = WPCore.clockSample(clock, m.c, m.s, Date.now());
+        if (clock) sync.setClockOffset(clock.offset);
+      }
+    } else if (m.t === "welcome") {
+      if (WPCore.isPeerId(m.id)) myId = m.id;
+      if (typeof m.name === "string") cfg.name = m.name;   // pseudo éventuellement suffixé par le serveur
+      send({ t: "rtc", sub: "hello" });                    // découverte webcam
+    } else if (m.t === "state" || m.t === "sync") applyRemote(m);
+    else if (m.t === "chat") { if (typeof m.name === "string" && typeof m.text === "string") addChat(m.name, m.text, false); }
+    else if (m.t === "system") {
+      if (typeof m.text === "string") sys(m.text);
+      if (m.event === "leave" && WPCore.isPeerId(m.id)) removeCam(m.id);
+    } else if (m.t === "rtc") onRtc(m);
   }
 
   // ---------- VIDEO ----------
@@ -73,14 +88,25 @@
 
   function bindVideo(v) {
     if (!v || v === video) return;
+    unbindVideo();
     video = v;
     ["play", "pause", "seeked"].forEach(ev => v.addEventListener(ev, onLocalEvent));
     sys("Vidéo détectée et synchronisée.");
+    if (pending) { const m = pending; pending = null; applyRemote(m); }
   }
 
+  function unbindVideo() {
+    try { if (video) ["play", "pause", "seeked"].forEach(ev => video.removeEventListener(ev, onLocalEvent)); } catch (_) {}
+    video = null;
+  }
+
+  const snapshot = () => ({ time: video.currentTime, paused: video.paused });
+
+  // Événement natif : le contrôleur décide s'il s'agit de l'écho d'une commande distante.
   function onLocalEvent(e) {
-    if (suppress || !connected || !video) return;
-    send({ t: "sync", action: e.type, time: video.currentTime, paused: video.paused });
+    if (!connected || !video) return;
+    const msg = sync.onLocalEvent(e.type, snapshot());
+    if (msg) send(msg);
   }
 
   // Pilotage : sur Netflix via l'API interne (anti-M7375), ailleurs via l'élément.
@@ -92,27 +118,32 @@
   function ctrlPlay()  { if (isNetflix) nfx("play");  else if (video) video.play().catch(() => {}); }
   function ctrlPause() { if (isNetflix) nfx("pause"); else if (video) video.pause(); }
   function ctrlSeek(t) {
-    if (video && Math.abs(video.currentTime - t) < 0.8) return; // déjà aligné
+    t = Math.max(0, t);
     if (isNetflix) nfx("seek", Math.round(t * 1000));
     else if (video) video.currentTime = t;
   }
 
+  // Applique un message distant (`sync` ou `state`). Le contrôleur calcule les commandes
+  // (jamais de play/pause déduit d'un heartbeat) et mémorise les événements qu'elles vont
+  // provoquer pour ne pas les renvoyer.
   function applyRemote(m) {
-    if (!video) { bindVideo(findVideo()); if (!video) return; }
-    suppress = true;
+    if (!video) { bindVideo(findVideo()); }
+    if (!video) { if (m.t === "state") pending = m; return; }
     try {
-      if (typeof m.time === "number") ctrlSeek(m.time);
-      if (m.action === "pause" || m.paused === true) ctrlPause();
-      else if (m.action === "play" || m.paused === false) ctrlPlay();
+      for (const c of sync.onRemote(m, snapshot())) {
+        if (c.cmd === "seek") ctrlSeek(c.time);
+        else if (c.cmd === "play") ctrlPlay();
+        else if (c.cmd === "pause") ctrlPause();
+      }
     } catch (_) {}
-    setTimeout(() => { suppress = false; }, 700);
   }
 
   function watchForVideo() {
     if (watching) return;
     watching = true;
     bindVideo(findVideo());
-    const obs = new MutationObserver(() => { if (!video) bindVideo(findVideo()); });
+    // rebind aussi quand la balise est remplacée (épisode suivant, navigation SPA)
+    const obs = new MutationObserver(() => { if (!video || !video.isConnected) bindVideo(findVideo()); });
     obs.observe(document.documentElement, { childList: true, subtree: true });
     // filet : retente quelques secondes (lecteurs lazy comme Netflix)
     let tries = 0;
@@ -121,12 +152,14 @@
       bindVideo(findVideo());
     }, 500);
     intervals.push(iv);
-    // resync léger anti-drift
+    // resync léger anti-drift : position seulement, jamais d'ordre play/pause
     intervals.push(setInterval(() => {
-      if (video && !video.paused && connected) {
-        send({ t: "sync", action: "heartbeat", time: video.currentTime, paused: video.paused });
-      }
+      if (!video || !connected) return;
+      const hb = sync.heartbeat(snapshot());
+      if (hb) send(hb);
     }, 5000));
+    // réveille le service worker (reconnexion dont le timer se serait perdu)
+    intervals.push(setInterval(() => rt({ cmd: "keepalive" }), 20000));
   }
 
   function connect() {
@@ -159,7 +192,7 @@
       <div id="wp-cams" class="wp-empty"></div>
       <div id="wp-messages"></div>
       <form id="wp-form">
-        <input id="wp-input" autocomplete="off" placeholder="Message…" />
+        <input id="wp-input" autocomplete="off" maxlength="500" placeholder="Message…" />
         <button type="submit">↑</button>
       </form>`;
     document.body.appendChild(ui);
@@ -170,7 +203,7 @@
       const text = inp.value.trim();
       if (!text) return;
       addChat(cfg.name, text, true);
-      send({ t: "chat", name: cfg.name, text });
+      send({ t: "chat", text });
       inp.value = "";
     });
     ui.querySelector("#wp-min").addEventListener("click", () => ui.classList.toggle("wp-collapsed"));
@@ -221,7 +254,7 @@
     const p = { pc, polite: myId < id, makingOffer: false };
     peers[id] = p;
     pc.onicecandidate = ({ candidate }) => {
-      if (candidate) send({ t: "rtc", sub: "ice", from: myId, to: id, candidate });
+      if (candidate) send({ t: "rtc", sub: "ice", to: id, candidate });
     };
     pc.ontrack = ({ streams }) => showCam(id, streams[0], false);
     pc.onconnectionstatechange = () => {
@@ -231,7 +264,7 @@
       try {
         p.makingOffer = true;
         await pc.setLocalDescription();
-        send({ t: "rtc", sub: "desc", from: myId, to: id, sdp: pc.localDescription });
+        send({ t: "rtc", sub: "desc", to: id, sdp: pc.localDescription });
       } catch (_) {} finally { p.makingOffer = false; }
     };
     if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
@@ -243,7 +276,7 @@
     if (m.to && m.to !== myId) return;
     if (m.sub === "hello") {
       ensurePeer(m.from);
-      if (!m.to) send({ t: "rtc", sub: "hello", from: myId, to: m.from });
+      if (!m.to) send({ t: "rtc", sub: "hello", to: m.from });
       return;
     }
     const p = ensurePeer(m.from), pc = p.pc;
@@ -254,7 +287,7 @@
         await pc.setRemoteDescription(m.sdp);
         if (m.sdp.type === "offer") {
           await pc.setLocalDescription();
-          send({ t: "rtc", sub: "desc", from: myId, to: m.from, sdp: pc.localDescription });
+          send({ t: "rtc", sub: "desc", to: m.from, sdp: pc.localDescription });
         }
       } else if (m.sub === "ice") {
         try { await pc.addIceCandidate(m.candidate); } catch (_) {}
@@ -266,7 +299,7 @@
     if (localStream) {
       localStream.getTracks().forEach(t => t.stop());
       localStream = null;
-      removeCam(myId);
+      removeCam(LOCAL);
       for (const id in peers) peers[id].pc.getSenders().forEach(s => { try { peers[id].pc.removeTrack(s); } catch (_) {} });
       camBtn().classList.remove("wp-active");
       return;
@@ -274,10 +307,10 @@
     try {
       localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
     } catch (_) { sys("Accès caméra/micro refusé."); return; }
-    showCam(myId, localStream, true);
+    showCam(LOCAL, localStream, true);
     camBtn().classList.add("wp-active");
     for (const id in peers) localStream.getTracks().forEach(t => peers[id].pc.addTrack(t, localStream));
-    send({ t: "rtc", sub: "hello", from: myId });
+    send({ t: "rtc", sub: "hello" });
   }
 
   function camBtn() { return ui && ui.querySelector("#wp-cam"); }
@@ -313,12 +346,10 @@
     else if (msg.cmd === "wsstatus") {
       connected = !!msg.open;
       setStatus(connected);
-      if (connected) {
-        sys("Connecté ✓ — en attente d'un autre participant…");
-        send({ t: "rtc", sub: "hello", from: myId }); // découverte webcam
-      } else if (msg.error) {
-        sys("Connexion au serveur impossible.");
-      }
+      if (connected) sys("Connecté ✓");
+      else if (msg.final) sys("Connexion perdue : reconnexion abandonnée. Rouvre le lien d'invitation pour rejoindre.");
+      else if (msg.retryIn) sys(`Connexion perdue — nouvelle tentative dans ${Math.ceil(msg.retryIn / 1000)} s…`);
+      else if (msg.error) sys("Connexion au serveur impossible.");
     } else if (msg.cmd === "status") {
       reply && reply({ connected, room: cfg.room, hasVideo: !!(video || findVideo()) });
     }
