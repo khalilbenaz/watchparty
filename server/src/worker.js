@@ -51,46 +51,122 @@ function randomId() {
   return b64url(a);
 }
 
-export class Room {
-  constructor(state) {
-    this.state = state;
+export class Room extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.last = null; // dernier état de lecture { time, paused, at, v } — `at` = horloge serveur
+    // Le DO peut être évincé (hibernation) : on recharge l'état avant tout traitement.
+    ctx.blockConcurrencyWhile(async () => { this.last = (await ctx.storage.get("last")) || null; });
+  }
+
+  openSockets() {
+    return this.ctx.getWebSockets().filter(w => w.readyState === 1);
   }
 
   async fetch(request) {
     const url = new URL(request.url);
-    const name = (url.searchParams.get("name") || "Anon").slice(0, 32);
-
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("Expected WebSocket", { status: 426 });
     }
-    if (this.state.getWebSockets().length >= LIMITS.MAX_PEERS) {
+    const peers = this.openSockets();
+    if (peers.length >= LIMITS.MAX_PEERS) {
       return new Response("room full", { status: 403 });
     }
 
+    // Identité attribuée PAR LE SERVEUR : id aléatoire, pseudo assaini et unique.
+    const taken = peers.map(w => (w.deserializeAttachment() || {}).name).filter(Boolean);
+    const name = uniqueName(sanitizeName(url.searchParams.get("name")), taken);
+    const id = randomId().slice(0, 11);
+
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
-    this.state.acceptWebSocket(server);
-    server.serializeAttachment({ name });
-    this.broadcast(server, JSON.stringify({ t: "system", text: `${name} a rejoint` }));
+    this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ id, name, bucket: null, strikes: 0 });
+
+    const now = Date.now();
+    server.send(JSON.stringify({
+      t: "welcome", id, name, now,
+      peers: peers.map(w => { const a = w.deserializeAttachment() || {}; return { id: a.id, name: a.name }; }),
+    }));
+    const st = extrapolate(this.last, now);
+    if (st) server.send(JSON.stringify({ t: "state", time: st.time, paused: st.paused, v: this.last.v, ts: now }));
+    this.broadcast(server, { t: "system", event: "join", id, name, text: `${name} a rejoint` });
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  webSocketMessage(ws, message) {
-    const size = typeof message === "string" ? message.length : (message.byteLength || 0);
+  async webSocketMessage(ws, message) {
+    const att = ws.deserializeAttachment() || {};
+    const size = typeof message === "string" ? enc.encode(message).length : (message.byteLength || 0);
     if (size > LIMITS.MAX_MSG_BYTES) { try { ws.close(1009, "message too big"); } catch (_) {} return; }
-    this.broadcast(ws, message);
+
+    const now = Date.now();
+    const rl = consumeToken(att.bucket, now, { burst: LIMITS.RATE_BURST, perSec: LIMITS.RATE_PER_SEC });
+    att.bucket = rl.bucket;
+    const v = rl.allowed ? validateClientMessage(message) : null;
+    if (!rl.allowed || !v.ok) {
+      att.strikes = (att.strikes || 0) + 1;
+      ws.serializeAttachment(att);
+      if (att.strikes >= LIMITS.STRIKES_MAX) { try { ws.close(1008, "abus"); } catch (_) {} }
+      return;
+    }
+    ws.serializeAttachment(att);
+
+    const m = v.msg;
+    switch (m.t) {
+      case "ping":
+        ws.send(JSON.stringify({ t: "pong", c: m.c ?? null, s: now }));
+        break;
+      case "chat":
+        this.broadcast(ws, { t: "chat", from: att.id, name: att.name, text: m.text });
+        break;
+      case "sync":
+        await this.onSync(ws, att, m, now);
+        break;
+      case "rtc": {
+        const out = { t: "rtc", sub: m.sub, from: att.id };
+        if (m.to) out.to = m.to;
+        if (m.sdp) out.sdp = m.sdp;
+        if (m.candidate !== undefined) out.candidate = m.candidate;
+        if (m.to) this.sendTo(m.to, out);
+        else this.broadcast(ws, out);
+        break;
+      }
+    }
+  }
+
+  async onSync(ws, att, m, now) {
+    const last = this.last;
+    if (m.action === "heartbeat") {
+      // Un heartbeat ne change JAMAIS l'état lecture/pause : il ne fait que rafraîchir la
+      // position d'une salle en lecture. Il est ignoré si la salle est (ou doit être) en pause.
+      if (m.paused || (last && last.paused)) return;
+      this.last = { time: m.time, paused: false, at: now, v: last ? last.v : 0 };
+    } else {
+      this.last = { time: m.time, paused: m.paused, at: now, v: (last ? last.v : 0) + 1 };
+      await this.ctx.storage.put("last", this.last);
+    }
+    this.broadcast(ws, { t: "sync", action: m.action, time: m.time, paused: m.paused, from: att.id, v: this.last.v, ts: now });
   }
 
   webSocketClose(ws) {
     const att = ws.deserializeAttachment() || {};
-    this.broadcast(ws, JSON.stringify({ t: "system", text: `${att.name || "Quelqu'un"} est parti` }));
+    this.broadcast(ws, { t: "system", event: "leave", id: att.id, name: att.name, text: `${att.name || "Quelqu'un"} est parti` });
     try { ws.close(); } catch (_) {}
   }
 
   webSocketError(ws) { try { ws.close(); } catch (_) {} }
 
-  broadcast(sender, data) {
-    for (const peer of this.state.getWebSockets()) {
+  sendTo(id, obj) {
+    const data = JSON.stringify(obj);
+    for (const peer of this.openSockets()) {
+      const a = peer.deserializeAttachment() || {};
+      if (a.id === id) { try { peer.send(data); } catch (_) {} }
+    }
+  }
+
+  broadcast(sender, obj) {
+    const data = JSON.stringify(obj);
+    for (const peer of this.openSockets()) {
       if (peer !== sender) { try { peer.send(data); } catch (_) {} }
     }
   }
