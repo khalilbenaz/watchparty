@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import {
-  LIMITS, PEER_ID_RE, sanitizeName, uniqueName, validateClientMessage, consumeToken,
+  LIMITS, sanitizeName, uniqueName, validateClientMessage, consumeToken,
   extrapolate, parseAllowedOrigins, isAllowedOrigin,
 } from "./protocol.js";
 

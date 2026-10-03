@@ -1,0 +1,18 @@
+{
+  "name": "watchparty",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WatchParty — extension MV3 (racine : lint, tests de la logique de l'extension, zip). Le relais est dans server/.",
+  "scripts": {
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:server": "npm --prefix server test",
+    "build:zip": "bash scripts/build-zip.sh"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.0.0",
+    "eslint": "^9.0.0",
+    "globals": "^16.0.0",
+    "vitest": "^4.1.0"
+  }
+}

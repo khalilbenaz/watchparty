@@ -31,6 +31,7 @@ const isStr = (v, max) => typeof v === "string" && v.length <= max;
 export function sanitizeName(raw) {
   const s = typeof raw === "string"
     // contrôles, séparateurs de ligne, marques bidi (usurpation visuelle)
+    // eslint-disable-next-line no-control-regex -- on retire VOLONTAIREMENT les caractères de contrôle
     ? raw.replace(/[\u0000-\u001F\u007F-\u009F\u2028\u2029\u200B-\u200F\u202A-\u202E\u2066-\u2069]/g, "")
     : "";
   const t = s.trim().slice(0, LIMITS.NAME_MAX).trim();
@@ -120,7 +121,7 @@ function validateRtc(m) {
 // ---------- limite de débit (seau à jetons) ----------
 // Fonction pure : prend l'ancien seau, rend le nouveau. Sérialisable (attachement WS / storage DO).
 export function consumeToken(bucket, now, { burst, perSec }) {
-  let tokens = burst, ts = now;
+  let tokens = burst;
   if (bucket && Number.isFinite(bucket.tokens) && Number.isFinite(bucket.ts)) {
     const dt = Math.max(0, now - bucket.ts) / 1000;   // horloge qui recule → pas de pénalité
     tokens = Math.min(burst, bucket.tokens + dt * perSec);
