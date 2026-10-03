@@ -248,8 +248,13 @@
   }
 
   // ---------- WEBRTC (webcam, mesh + perfect negotiation) ----------
+  const MAX_PEER_CONNECTIONS = 7;   // la salle compte 8 participants au plus
+  // `id` vient du serveur (champ `from`), mais on revalide : jamais de valeur libre dans
+  // une table ou un sélecteur.
   function ensurePeer(id) {
+    if (!WPCore.isPeerId(id) || id === myId) return null;
     if (peers[id]) return peers[id];
+    if (Object.keys(peers).length >= MAX_PEER_CONNECTIONS) return null;
     const pc = new RTCPeerConnection(ICE);
     const p = { pc, polite: myId < id, makingOffer: false };
     peers[id] = p;
@@ -258,7 +263,14 @@
     };
     pc.ontrack = ({ streams }) => showCam(id, streams[0], false);
     pc.onconnectionstatechange = () => {
-      if (["failed", "disconnected", "closed"].includes(pc.connectionState)) removeCam(id);
+      clearTimeout(p.failTimer);
+      const st = pc.connectionState;
+      // « disconnected » est TRANSITOIRE (coupure ICE brève) : on n'y touche pas, la
+      // connexion se rétablit seule ou passe à « failed ».
+      if (st === "failed") {
+        try { pc.restartIce(); } catch (_) {}
+        p.failTimer = setTimeout(() => { if (peers[id] === p && pc.connectionState !== "connected") removeCam(id); }, 15000);
+      } else if (st === "closed") removeCam(id);
     };
     pc.onnegotiationneeded = async () => {
       try {
@@ -272,16 +284,19 @@
   }
 
   async function onRtc(m) {
-    if (m.from === myId) return;
+    if (!WPCore.isPeerId(m.from) || m.from === myId) return;
     if (m.to && m.to !== myId) return;
     if (m.sub === "hello") {
-      ensurePeer(m.from);
+      if (!ensurePeer(m.from)) return;
       if (!m.to) send({ t: "rtc", sub: "hello", to: m.from });
       return;
     }
-    const p = ensurePeer(m.from), pc = p.pc;
+    const p = ensurePeer(m.from);
+    if (!p) return;
+    const pc = p.pc;
     try {
       if (m.sub === "desc") {
+        if (!m.sdp || (m.sdp.type !== "offer" && m.sdp.type !== "answer") || typeof m.sdp.sdp !== "string") return;
         const collision = m.sdp.type === "offer" && (p.makingOffer || pc.signalingState !== "stable");
         if (!p.polite && collision) return;
         await pc.setRemoteDescription(m.sdp);
@@ -315,10 +330,15 @@
 
   function camBtn() { return ui && ui.querySelector("#wp-cam"); }
 
+  // Comparaison directe : aucun identifiant n'est interpolé dans un sélecteur CSS.
+  function findTile(grid, id) {
+    return [...grid.children].find(el => el.dataset.id === id) || null;
+  }
+
   function showCam(id, stream, mine) {
     if (!ui) return;
     const grid = ui.querySelector("#wp-cams");
-    let tile = grid.querySelector(`[data-id="${id}"]`);
+    let tile = findTile(grid, id);
     if (!tile) {
       tile = document.createElement("video");
       tile.dataset.id = id;
@@ -331,11 +351,11 @@
   }
 
   function removeCam(id) {
-    if (peers[id]) { try { peers[id].pc.close(); } catch (_) {} delete peers[id]; }
+    if (peers[id]) { clearTimeout(peers[id].failTimer); try { peers[id].pc.close(); } catch (_) {} delete peers[id]; }
     if (!ui) return;
-    const tile = ui.querySelector(`#wp-cams [data-id="${id}"]`);
-    if (tile) tile.remove();
     const grid = ui.querySelector("#wp-cams");
+    const tile = grid && findTile(grid, id);
+    if (tile) tile.remove();
     if (grid && !grid.children.length) grid.classList.add("wp-empty");
   }
 
