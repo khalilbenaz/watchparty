@@ -7,11 +7,11 @@ export default [
   {
     // Extension : scripts classiques (pas de modules), API chrome.*
     files: ["extension/**/*.js"],
-    languageOptions: { sourceType: "script", globals: { ...globals.browser, ...globals.webextensions, module: "readonly", importScripts: "readonly" } },
+    languageOptions: { sourceType: "script", globals: { ...globals.browser, ...globals.webextensions, module: "readonly", importScripts: "readonly", WP_CONFIG: "readonly", WPCore: "readonly" } },
   },
   {
     files: ["extension/background.js"],
-    languageOptions: { globals: { ...globals.serviceworker, ...globals.webextensions } },
+    languageOptions: { globals: { ...globals.serviceworker, ...globals.webextensions, importScripts: "readonly", WP_CONFIG: "readonly", WPCore: "readonly" } },
   },
   {
     // Worker : modules ES, runtime workerd

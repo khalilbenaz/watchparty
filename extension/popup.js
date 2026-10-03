@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const SERVER = "wss://watchparty-relay.khalilbenaz.workers.dev";
+const SERVER = WP_CONFIG.SERVER;            // défini une seule fois dans config.js
 const HTTP = SERVER.replace(/^ws/, "http"); // wss→https
 let tab;
 
@@ -10,15 +10,7 @@ async function mintRoom() {
   return r.json(); // { room, token }
 }
 
-// accepte un lien complet (…#wp=room.token) ou directement "room.token"
-function parseInvite(s) {
-  const m = s.match(/#wp=([^&]+)/);
-  let v = m ? m[1] : s;
-  try { v = decodeURIComponent(v); } catch (_) {}
-  const i = v.indexOf(".");
-  if (i < 0) return null;
-  return { room: v.slice(0, i), token: v.slice(i + 1) };
-}
+const parseInvite = WPCore.parseInvite; // lien complet (…#wp=room.token) ou "room.token"
 
 async function init() {
   const v = await chrome.storage.local.get(["name"]);
@@ -62,10 +54,10 @@ async function createParty() {
 }
 
 function sendStart(m) {
-  // m = { server, room, token, name }
+  // m = { room, token, name } — l'URL du relais reste dans config.js
   chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m }, () => {
     if (chrome.runtime.lastError) {
-      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content.js"] }, () => {
+      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["wp-core.js", "content.js"] }, () => {
         chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m });
       });
     }
@@ -84,7 +76,7 @@ async function launch(room, token) {
   const name = $("name").value.trim() || "Anon";
   await chrome.storage.local.set({ name });
 
-  sendStart({ server: SERVER, room, token, name });
+  sendStart({ room, token, name });
 
   // On ne génère le lien QUE si une vidéo est détectée/synchronisée sur la page.
   $("out").textContent = "⏳ Détection de la vidéo en cours…"; $("out").className = "hint";

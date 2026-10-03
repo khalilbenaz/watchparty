@@ -6,12 +6,11 @@
   if (window.__watchPartyLoaded) return;
   window.__watchPartyLoaded = true;
 
-  const SERVER = "wss://watchparty-relay.khalilbenaz.workers.dev"; // figé, jamais exposé dans l'UI
   const isNetflix = /(^|\.)netflix\.com$/.test(location.hostname);
   let connected = false;
   let video = null;
   let suppress = false;       // ignore les events vidéo qu'on déclenche nous-mêmes
-  let cfg = { server: SERVER, room: "", token: "", name: "Anon" };
+  let cfg = { room: "", token: "", name: "Anon" };
   let ui = null;
   let watching = false;       // watchForVideo déjà lancé ?
 
@@ -132,7 +131,7 @@
 
   function connect() {
     sys(`Connexion à la salle « ${cfg.room} »…`);
-    rt({ cmd: "connect", server: cfg.server || SERVER, room: cfg.room, token: cfg.token, name: cfg.name });
+    rt({ cmd: "connect", room: cfg.room, token: cfg.token, name: cfg.name });
   }
 
   function start(config) {
@@ -340,7 +339,7 @@
       chrome.storage.local.get(["name"], info => {
         if (chrome.runtime.lastError) return;
         const name = (info && info.name) || "Invité" + Math.floor(Math.random() * 100);
-        start({ server: SERVER, room, token, name });
+        start({ room, token, name });
       });
     } catch (_) {}
   })();

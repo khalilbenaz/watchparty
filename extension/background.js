@@ -3,6 +3,8 @@
 // fonctionne sur Netflix & co). Relaie les messages avec le content script via
 // chrome.runtime. Une connexion par onglet.
 
+importScripts("config.js", "wp-core.js"); // SERVER vient de config.js, jamais d'un message
+
 const conns = {}; // tabId -> { ws, server, room, name }
 
 function notify(tabId, msg) {
@@ -14,8 +16,9 @@ function closeConn(tabId) {
   if (c) { try { c.ws.close(); } catch (_) {} delete conns[tabId]; }
 }
 
-function connect(tabId, { server, room, token, name }) {
+function connect(tabId, { room, token, name }) {
   closeConn(tabId);
+  const server = WP_CONFIG.SERVER;
   const url = `${server}?room=${encodeURIComponent(room)}&token=${encodeURIComponent(token || "")}&name=${encodeURIComponent(name)}`;
   let ws;
   try { ws = new WebSocket(url); }
