@@ -57,8 +57,15 @@ function sendStart(m) {
   // m = { room, token, name } — l'URL du relais reste dans config.js
   chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m }, () => {
     if (chrome.runtime.lastError) {
-      chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["wp-core.js", "content.js"] }, () => {
-        chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m });
+      // Site hors de la liste du manifest : injection À LA DEMANDE, permise par activeTab
+      // (le clic sur l'icône) — l'extension n'a donc aucune permission d'hôte permanente.
+      const target = { tabId: tab.id };
+      chrome.scripting.insertCSS({ target, files: ["sidebar.css"] }, () => {
+        void chrome.runtime.lastError;
+        chrome.scripting.executeScript({ target, files: ["wp-core.js", "content.js"] }, () => {
+          if (chrome.runtime.lastError) { $("out").textContent = "❌ Impossible d'agir sur cette page."; return; }
+          chrome.tabs.sendMessage(tab.id, { cmd: "start", ...m });
+        });
       });
     }
   });
