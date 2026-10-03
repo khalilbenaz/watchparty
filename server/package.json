@@ -5,9 +5,12 @@
   "description": "Relais WebSocket WatchParty (Cloudflare Worker + Durable Object)",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "test": "vitest run"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "vitest": "^4.1.11",
     "wrangler": "^4.0.0"
   }
 }
